@@ -1,0 +1,157 @@
+---
+title: "Homework 5"
+author: "Wenyu Zhang"
+date: "2023-11-08"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+set.seed(1)
+```
+
+# Problem 1
+
+```{r}
+homicide = 
+  read_csv("./homicide-data.csv") |> 
+  mutate(city_state = paste(city, state, sep = ", "))
+```
+
+```{r}
+city_summary =
+  homicide |> 
+  group_by(city_state) |> 
+  summarize(total_homicide = n(),
+            unsolved_homicide = 
+              sum(disposition %in% c("Closed without arrest", "Open/No arrest")))
+```
+
+```{r}
+BMD_data = 
+  city_summary |> 
+  filter(city_state == "Baltimore, MD")
+BMD_test = prop.test(BMD_data$unsolved_homicide, BMD_data$total_homicide)
+tidy_BMD_test = broom::tidy(BMD_test)
+```
+
+```{r}
+all_cities_test <- city_summary |> 
+  mutate(prop_test = purrr::map2(unsolved_homicide, total_homicide, ~prop.test(.x, .y))) |> 
+  mutate(tidy_test = purrr::map(prop_test, broom::tidy)) |> 
+  unnest(tidy_test) |> 
+  select(city_state, estimate, conf.low, conf.high)
+```
+
+```{r}
+all_cities_test |> 
+  ggplot(aes(x = reorder(city_state, -estimate), y = estimate)) +
+  geom_point() +
+  geom_errorbar(aes(ymin = conf.low, ymax = conf.high), width = 0.2) +
+  coord_flip() +
+  labs(x = "City", y = "Proportion of Unsolved Homicides") +
+  theme_minimal()
+```
+
+# Problem 2
+
+```{r}
+file_names = list.files(path = "./data", full.names = TRUE)
+files_data = purrr::map(file_names, read_csv)
+longitutional_study = tibble(file_names, files_data)
+```
+
+```{r}
+longitutional_study =
+  longitutional_study |> 
+  mutate(subject_id = str_extract(file_names, "[a-z]{1,3}_\\d\\d"),
+         arm = str_extract(subject_id, "[a-z]{1,3}")) |> 
+  unnest(cols = c(files_data)) |> 
+  select(file_names, subject_id, arm, everything()) |> 
+  pivot_longer(cols = starts_with("week"),
+               names_to = "time",
+               values_to = "observations")
+```
+
+```{r}
+longitutional_study |> 
+  ggplot(aes(x = time, y = observations, group = subject_id, color = arm)) +
+  geom_line() +
+  theme_minimal() +
+  labs(title = "Spaghetti Plot of Observations Over Time", x = "Time", y = "Observation")
+```
+
+# Problem 3
+
+```{r}
+sim_mean_sd = function(n = 30, mu = 0, sigma = 5) {
+  sim_data = tibble(
+    x = rnorm(n, mean = mu, sd = sigma)
+  )
+  
+  sim_data |> 
+    summarise(
+      mu_hat = broom::tidy(t.test(x, mu = 0, conf.level = 0.05))$estimate,
+      p_value = broom::tidy(t.test(x, mu = 0, conf.level = 0.05))$p.value
+    )
+}
+```
+
+```{r}
+output = vector("list", 5000)
+
+for (i in 1:5000) {
+  output[[i]] = sim_mean_sd(30)
+}
+
+sim_result_df = 
+  expand_grid(
+    sample_size = 30,
+    iter = 1:5000
+  ) |> 
+  mutate(
+    estimate_df = purrr::map(sample_size, sim_mean_sd)
+  ) |> 
+  unnest(estimate_df)
+```
+
+```{r}
+sim_results_df = 
+  expand_grid(
+    sample_size = 30,
+    diff_mu = c(0:6),
+    iter = 1:5000
+  ) |> 
+  mutate(
+    estimate_df = purrr::map2(sample_size, diff_mu, \(n, mu) sim_mean_sd())
+  ) |> 
+  unnest(estimate_df)
+```
+
+```{r}
+sim_summary = 
+  sim_results_df |> 
+  group_by(diff_mu) |> 
+  summarise(
+    power = mean(p_value < 0.05),
+    average_mu_hat = mean(mu_hat),
+    avg_rej_mu_hat = mean(mu_hat[p_value < 0.05])
+  )
+```
+
+```{r}
+sim_summary |> 
+  ggplot(aes(x = diff_mu, y = power)) +
+  geom_line() +
+  labs(title = "Power vs. true mean", x= "True mean", y = "Power")
+```
+
+```{r}
+sim_summary |> 
+  ggplot(aes(x = diff_mu)) +
+  geom_line(aes(y = average_mu_hat), color = "blue") +
+  geom_line(aes(y = avg_rej_mu_hat), color = "red") +
+  labs(title = "Average estimate vs true mean", x = "True mean", y = "Average estimate of mu")
+```
+
